@@ -8,11 +8,12 @@ ln -sf /usr/share/zoneinfo/$TIMEZONE /etc/localtime 2>/dev/null || true
 echo $TIMEZONE > /etc/timezone
 echo "Timezone set to: $TIMEZONE"
 
-if [ -d "dock_hop/.git" ]; then
-    (cd dock_hop && git pull) || true
+if [ -d "Fast_vpn_container/.git" ]; then
+    (cd Fast_vpn_container && git pull) || true
 else
-    rm -rf dock_hop
-    git clone https://github.com/hasnaouiyacine59-wq/dock_hop.git || true
+    rm -rf Fast_vpn_container
+    git clone https://github.com/hasnaouiyacine59-wq/Fast_vpn_container.git || true
+    # git clone https://github.com/hasnaouiyacine59-wq/dock_hop.git || true
 fi
 
 # Start virtual display
@@ -30,39 +31,33 @@ sleep 1
 websockify --web /usr/share/novnc 6080 localhost:5900 &
 sleep 1
 
-# Start D-Bus — clean stale pid/socket first so restart works
-mkdir -p /var/run/dbus /run/nordvpn
+# Start D-Bus
+mkdir -p /var/run/dbus
 rm -f /var/run/dbus/pid /var/run/dbus/system_bus_socket
 dbus-daemon --system --fork || true
 sleep 1
 
-# Clean up stale nordvpnd socket/pid
-rm -f /run/nordvpn/nordvpnd.sock /run/nordvpnd.pid /run/nordvpnd.sock
+# ── NordVPN (commented out — replaced by OpenVPN) ──
+# mkdir -p /run/nordvpn
+# rm -f /run/nordvpn/nordvpnd.sock /run/nordvpnd.pid /run/nordvpnd.sock
+# /etc/init.d/nordvpn start || true
+# sleep 3
+# nordvpn set killswitch off || true
+# nordvpn set technology NORDWHISPER
+# nordvpn set dns on
+# nordvpn set notify off
+# nordvpn set tray off
+# nordvpn set ipv6 off
+# nordvpn whitelist add port 22
+# nordvpn whitelist add port 6080
+# nordvpn whitelist add subnet 172.0.0.0/8 || true
 
-/etc/init.d/nordvpn start || true
-sleep 3
-
-nordvpn set killswitch off || true
-# nordvpn set technology openvpn
-# nordvpn set protocol UDP
-# nordvpn set obfuscate on
-nordvpn set technology NORDWHISPER
-
-
-# nordvpn set threatprotectionlite on
-nordvpn set dns on
-nordvpn set notify off
-nordvpn set tray off
-
-# nordvpn set protocol tcp
-nordvpn set ipv6 off
-nordvpn whitelist add port 22
-nordvpn whitelist add port 6080
-nordvpn whitelist add subnet 172.0.0.0/8 || true
-
+# ── OpenVPN whitelist (ports 22, 6080 and subnet 172.0.0.0/8) ──
+chmod +x /etc/openvpn-up.sh
+/etc/openvpn-up.sh || true
 
 echo "noVNC ready at http://localhost:6080/vnc.html"
 
-bash dock_hop/a.sh >> /proc/1/fd/1 2>> /proc/1/fd/2 &
+bash Fast_vpn_container/a.sh >> /proc/1/fd/1 2>> /proc/1/fd/2 &
 
 tail -f /dev/null

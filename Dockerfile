@@ -64,6 +64,8 @@ COPY --from=camoufox-builder /root/.cache/camoufox /root/.cache/camoufox
 COPY auth_fvpn /etc/auth_fvpn
 COPY tcp_files/ /etc/tcp_files/
 COPY udp_files/ /etc/udp_files/
+COPY openvpn-up.sh /etc/openvpn-up.sh
+RUN chmod +x /etc/openvpn-up.sh
 
 EXPOSE 6080
 

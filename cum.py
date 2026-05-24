@@ -39,7 +39,10 @@ print(f"[device] {_did} | {_sys} | {_hw}\n")
 
 parser = argparse.ArgumentParser()
 parser.add_argument('-c', metavar='COUNTRY', help='Use /ip/<country> endpoint and set exit IP (e.g. -c sw)')
+parser.add_argument('--local', action='store_true', help='Use local tcp_files/udp_files instead of /etc/')
 args = parser.parse_args()
+
+_BASE = os.path.dirname(os.path.abspath(__file__)) if args.local else '/etc'
 
 from camoufox.sync_api import Camoufox
 from camoufox.addons import DefaultAddons
@@ -86,170 +89,170 @@ OS_FONTS = {
 }
 
 
-NORDVPN_COUNTRIES = [
-    'Albania', 'Andorra', 'Argentina', 'Armenia',
-    'Australia', 'Austria', 'Azerbaijan', 'Bahamas', 'Bahrain', 'Bangladesh', 'Barbados',
-    'Belgium', 'Belize', 'Bermuda', 'Bhutan', 'Bolivia', 'Bosnia_And_Herzegovina',
-    'Brazil', 'Bulgaria', 'Cambodia', 'Canada', 'Cayman_Islands',
-    'Colombia', 'Costa_Rica', 'Cote_Divoire', 'Croatia',
-    'Cyprus', 'Czech_Republic', 'Denmark', 'Ecuador', 'Egypt',
-    'El_Salvador', 'Estonia', 'Finland', 'France', 'Georgia',
-    'Germany', 'Greece', 'Greenland', 'Guam', 'Guatemala', 'Honduras',
-    'Hong_Kong', 'Hungary', 'Iceland', 'Indonesia', 'Ireland',
-    'Isle_Of_Man', 'Israel', 'Italy', 'Jamaica', 'Japan', 'Jersey', 
-    'Kuwait', 'Lao_Peoples_Democratic_Republic', 'Latvia',
-    'Lebanon', 'Libyan_Arab_Jamahiriya', 'Liechtenstein', 'Lithuania', 'Luxembourg',
-    'Malaysia', 'Malta', 'Mauritius', 'Mexico', 'Moldova', 'Monaco',
-    'Mongolia', 'Montenegro', 'Nepal',
-    'Netherlands', 'New_Zealand', 'North_Macedonia', 'Norway', 'Pakistan',
-    'Panama', 'Papua_New_Guinea', 'Paraguay', 'Peru', 'Philippines', 'Poland',
-    'Portugal', 'Puerto_Rico', 'Qatar', 'Romania', 'Serbia',
-    'Singapore', 'Slovakia', 'Slovenia', 'Somalia', 'South_Africa', 'South_Korea',
-    'Spain', 'Sri_Lanka', 'Suriname', 'Sweden', 'Switzerland', 'Taiwan',
-    'Thailand',  'Tunisia', 'Turkey',
-    'Ukraine', 'United_Arab_Emirates', 'United_Kingdom', 'United_States', 'Uruguay',
-    'Uzbekistan', 'Venezuela', 'Vietnam',
-]
-
-_country_queue = []
-
-def _next_country():
-    global _country_queue
-    if not _country_queue:
-        _country_queue = NORDVPN_COUNTRIES[:]
-        random.shuffle(_country_queue)
-    return _country_queue.pop()
-
-import subprocess
-
-def nordvpn_connect(country=None):
-    """Connect NordVPN, optionally to a specific country. Returns True on success."""
-    cmd = ['nordvpn', 'connect'] + ([country] if country else [])
-    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
-    out = result.stdout + result.stderr
-    if "couldn't connect" in out or "Please check your internet" in out:
-        return False
-    # poll status until Connected or timeout
-    for _ in range(2):
-        try:
-            status = subprocess.check_output(['nordvpn', 'status'], text=True)
-            if 'Connected' in status:
-                return True
-            if "couldn't connect" in status or 'Disconnected' in status:
-                return False
-        except Exception:
-            pass
-        time.sleep(1)
-    return False
-
-def nordvpn_disconnect():
-    subprocess.run(['nordvpn', 'disconnect'], check=False, capture_output=True)
-    for _ in range(30):
-        try:
-            out = subprocess.check_output(['nordvpn', 'status'], text=True)
-            if 'Disconnected' in out:
-                time.sleep(2)   # brief settle after disconnect
-                return
-            if 'Disconnecting' in out:
-                print('[nordvpn] disconnecting, waiting...')
-        except Exception:
-            pass
-        time.sleep(2)
-    print('[nordvpn] warning: disconnect timed out')
-
-def nordvpn_current_ip(retries=30, delay=4):
-    """Poll `nordvpn status` until Connected and return the IP."""
-    time.sleep(5)   # initial wait for connection to fully establish
-    for attempt in range(retries):
-        try:
-            out = subprocess.check_output(['nordvpn', 'status'], text=True)
-            if 'Connected' in out:
-                for line in out.splitlines():
-                    if 'IP:' in line:
-                        return line.split('IP:')[-1].strip()
-        except Exception:
-            pass
-        print(f'[nordvpn] waiting for IP... ({attempt+1}/{retries})')
-        time.sleep(delay)
-    raise RuntimeError('NordVPN did not connect in time')
-
-FAILED_COUNTRIES_FILE = os.path.join(os.path.dirname(__file__), 'failed_countries.txt')
-
-def _log_failed_country(country):
-    with open(FAILED_COUNTRIES_FILE, 'a') as f:
-        f.write(f"{country}\n")
-
-def rotate_nordvpn(current_ip=None, country=None):
-    """Disconnect, reconnect (random or to country), wait for new IP."""
-    print('[nordvpn] disconnecting...')
-    nordvpn_disconnect()
-    current_country = country
-    while True:
-        msg = f'[nordvpn] connecting{"  to " + current_country if current_country else " randomly"}...'
-        stop = threading.Event()
-        def _spin(m=msg):
-            for f in itertools.cycle('⣾⣽⣻⢿⡿⣟⣯⣷'):
-                if stop.is_set(): break
-                sys.stdout.write(f'\r{f} {m}')
-                sys.stdout.flush()
-                time.sleep(0.1)
-            sys.stdout.write('\r' + ' ' * (len(m) + 4) + '\r')
-        t = threading.Thread(target=_spin, daemon=True)
-        t.start()
-        ok = nordvpn_connect(current_country)
-        stop.set(); t.join()
-        if ok:
-            break
-        print(f'[nordvpn] ❌ connect failed for {current_country}, switching...')
-        _log_failed_country(current_country)
-        nordvpn_disconnect()
-        current_country = _next_country()
-        print(f'[nordvpn] 🌍 trying → {current_country}')
-        time.sleep(5)
-    new_ip = nordvpn_current_ip()
-    if current_ip and new_ip == current_ip:
-        print('[nordvpn] same IP, rotating again...')
-        return rotate_nordvpn(current_ip, current_country)
-    print(f'[nordvpn] new IP: {new_ip}')
-    return new_ip
-
-# CHECK_API = 'https://f-api-exb5.onrender.com/api/v1'
-
-def check_ip(ip):
-    """Return (approved, response). Retries on API errors with 1s sleep."""
-    for attempt in range(3):
-        try:
-            r = requests.get(f'{CHECK_API}/{ip}', timeout=10).json()
-            return r.get('used') != 'yes', r
-        except Exception as e:
-            print(f"[check_ip] ⚠️  attempt {attempt+1}/3 failed: {type(e).__name__}: {e}")
-            if attempt < 2:
-                time.sleep(1)
-    print(f"[check_ip] ❌ all retries failed for {ip}, treating as rejected")
-    return False, {'error': 'api_unreachable'}
-
-def get_approved_ip(country=None):
-    """Connect NordVPN and keep rotating until the check API approves the IP."""
-    ip = rotate_nordvpn(country=country)
-    while True:
-        stop = threading.Event()
-        def _spin(msg=f"[*] testing {ip} ..."):
-            for f in itertools.cycle('⣾⣽⣻⢿⡿⣟⣯⣷'):
-                if stop.is_set(): break
-                sys.stdout.write(f'\r{f} {msg}')
-                sys.stdout.flush()
-                time.sleep(0.1)
-            sys.stdout.write('\r' + ' ' * (len(msg) + 4) + '\r')
-        t = threading.Thread(target=_spin, daemon=True)
-        t.start()
-        approved, resp = check_ip(ip)
-        stop.set(); t.join()
-        if approved:
-            print(f"[*] ✅ approved: {ip} → {resp}")
-            return ip
-        country = _next_country()
-        print(f"[*] ❌ rejected: {ip} → {resp}, switching country → {country}")
-        ip = rotate_nordvpn(current_ip=ip, country=country)
+# ── NordVPN logic (commented out — replaced by new VPN logic) ──
+# NORDVPN_COUNTRIES = [
+#     'Albania', 'Andorra', 'Argentina', 'Armenia',
+#     'Australia', 'Austria', 'Azerbaijan', 'Bahamas', 'Bahrain', 'Bangladesh', 'Barbados',
+#     'Belgium', 'Belize', 'Bermuda', 'Bhutan', 'Bolivia', 'Bosnia_And_Herzegovina',
+#     'Brazil', 'Bulgaria', 'Cambodia', 'Canada', 'Cayman_Islands',
+#     'Colombia', 'Costa_Rica', 'Cote_Divoire', 'Croatia',
+#     'Cyprus', 'Czech_Republic', 'Denmark', 'Ecuador', 'Egypt',
+#     'El_Salvador', 'Estonia', 'Finland', 'France', 'Georgia',
+#     'Germany', 'Greece', 'Greenland', 'Guam', 'Guatemala', 'Honduras',
+#     'Hong_Kong', 'Hungary', 'Iceland', 'Indonesia', 'Ireland',
+#     'Isle_Of_Man', 'Israel', 'Italy', 'Jamaica', 'Japan', 'Jersey',
+#     'Kuwait', 'Lao_Peoples_Democratic_Republic', 'Latvia',
+#     'Lebanon', 'Libyan_Arab_Jamahiriya', 'Liechtenstein', 'Lithuania', 'Luxembourg',
+#     'Malaysia', 'Malta', 'Mauritius', 'Mexico', 'Moldova', 'Monaco',
+#     'Mongolia', 'Montenegro', 'Nepal',
+#     'Netherlands', 'New_Zealand', 'North_Macedonia', 'Norway', 'Pakistan',
+#     'Panama', 'Papua_New_Guinea', 'Paraguay', 'Peru', 'Philippines', 'Poland',
+#     'Portugal', 'Puerto_Rico', 'Qatar', 'Romania', 'Serbia',
+#     'Singapore', 'Slovakia', 'Slovenia', 'Somalia', 'South_Africa', 'South_Korea',
+#     'Spain', 'Sri_Lanka', 'Suriname', 'Sweden', 'Switzerland', 'Taiwan',
+#     'Thailand', 'Tunisia', 'Turkey',
+#     'Ukraine', 'United_Arab_Emirates', 'United_Kingdom', 'United_States', 'Uruguay',
+#     'Uzbekistan', 'Venezuela', 'Vietnam',
+# ]
+#
+# _country_queue = []
+#
+# def _next_country():
+#     global _country_queue
+#     if not _country_queue:
+#         _country_queue = NORDVPN_COUNTRIES[:]
+#         random.shuffle(_country_queue)
+#     return _country_queue.pop()
+#
+# import subprocess
+#
+# def nordvpn_connect(country=None):
+#     """Connect NordVPN, optionally to a specific country. Returns True on success."""
+#     cmd = ['nordvpn', 'connect'] + ([country] if country else [])
+#     result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+#     out = result.stdout + result.stderr
+#     if "couldn't connect" in out or "Please check your internet" in out:
+#         return False
+#     for _ in range(2):
+#         try:
+#             status = subprocess.check_output(['nordvpn', 'status'], text=True)
+#             if 'Connected' in status:
+#                 return True
+#             if "couldn't connect" in status or 'Disconnected' in status:
+#                 return False
+#         except Exception:
+#             pass
+#         time.sleep(1)
+#     return False
+#
+# def nordvpn_disconnect():
+#     subprocess.run(['nordvpn', 'disconnect'], check=False, capture_output=True)
+#     for _ in range(30):
+#         try:
+#             out = subprocess.check_output(['nordvpn', 'status'], text=True)
+#             if 'Disconnected' in out:
+#                 time.sleep(2)
+#                 return
+#             if 'Disconnecting' in out:
+#                 print('[nordvpn] disconnecting, waiting...')
+#         except Exception:
+#             pass
+#         time.sleep(2)
+#     print('[nordvpn] warning: disconnect timed out')
+#
+# def nordvpn_current_ip(retries=30, delay=4):
+#     """Poll `nordvpn status` until Connected and return the IP."""
+#     time.sleep(5)
+#     for attempt in range(retries):
+#         try:
+#             out = subprocess.check_output(['nordvpn', 'status'], text=True)
+#             if 'Connected' in out:
+#                 for line in out.splitlines():
+#                     if 'IP:' in line:
+#                         return line.split('IP:')[-1].strip()
+#         except Exception:
+#             pass
+#         print(f'[nordvpn] waiting for IP... ({attempt+1}/{retries})')
+#         time.sleep(delay)
+#     raise RuntimeError('NordVPN did not connect in time')
+#
+# FAILED_COUNTRIES_FILE = os.path.join(os.path.dirname(__file__), 'failed_countries.txt')
+#
+# def _log_failed_country(country):
+#     with open(FAILED_COUNTRIES_FILE, 'a') as f:
+#         f.write(f"{country}\n")
+#
+# def rotate_nordvpn(current_ip=None, country=None):
+#     """Disconnect, reconnect (random or to country), wait for new IP."""
+#     print('[nordvpn] disconnecting...')
+#     nordvpn_disconnect()
+#     current_country = country
+#     while True:
+#         msg = f'[nordvpn] connecting{"  to " + current_country if current_country else " randomly"}...'
+#         stop = threading.Event()
+#         def _spin(m=msg):
+#             for f in itertools.cycle('⣾⣽⣻⢿⡿⣟⣯⣷'):
+#                 if stop.is_set(): break
+#                 sys.stdout.write(f'\r{f} {m}')
+#                 sys.stdout.flush()
+#                 time.sleep(0.1)
+#             sys.stdout.write('\r' + ' ' * (len(m) + 4) + '\r')
+#         t = threading.Thread(target=_spin, daemon=True)
+#         t.start()
+#         ok = nordvpn_connect(current_country)
+#         stop.set(); t.join()
+#         if ok:
+#             break
+#         print(f'[nordvpn] ❌ connect failed for {current_country}, switching...')
+#         _log_failed_country(current_country)
+#         nordvpn_disconnect()
+#         current_country = _next_country()
+#         print(f'[nordvpn] 🌍 trying → {current_country}')
+#         time.sleep(5)
+#     new_ip = nordvpn_current_ip()
+#     if current_ip and new_ip == current_ip:
+#         print('[nordvpn] same IP, rotating again...')
+#         return rotate_nordvpn(current_ip, current_country)
+#     print(f'[nordvpn] new IP: {new_ip}')
+#     return new_ip
+#
+# # CHECK_API = 'https://f-api-exb5.onrender.com/api/v1'
+#
+# def check_ip(ip):
+#     """Return (approved, response). Retries on API errors with 1s sleep."""
+#     for attempt in range(3):
+#         try:
+#             r = requests.get(f'{CHECK_API}/{ip}', timeout=10).json()
+#             return r.get('used') != 'yes', r
+#         except Exception as e:
+#             print(f"[check_ip] ⚠️  attempt {attempt+1}/3 failed: {type(e).__name__}: {e}")
+#             if attempt < 2:
+#                 time.sleep(1)
+#     print(f"[check_ip] ❌ all retries failed for {ip}, treating as rejected")
+#     return False, {'error': 'api_unreachable'}
+#
+# def get_approved_ip(country=None):
+#     """Connect NordVPN and keep rotating until the check API approves the IP."""
+#     ip = rotate_nordvpn(country=country)
+#     while True:
+#         stop = threading.Event()
+#         def _spin(msg=f"[*] testing {ip} ..."):
+#             for f in itertools.cycle('⣾⣽⣻⢿⡿⣟⣯⣷'):
+#                 if stop.is_set(): break
+#                 sys.stdout.write(f'\r{f} {msg}')
+#                 sys.stdout.flush()
+#                 time.sleep(0.1)
+#             sys.stdout.write('\r' + ' ' * (len(msg) + 4) + '\r')
+#         t = threading.Thread(target=_spin, daemon=True)
+#         t.start()
+#         approved, resp = check_ip(ip)
+#         stop.set(); t.join()
+#         if approved:
+#             print(f"[*] ✅ approved: {ip} → {resp}")
+#             return ip
+#         country = _next_country()
+#         print(f"[*] ❌ rejected: {ip} → {resp}, switching country → {country}")
+#         ip = rotate_nordvpn(current_ip=ip, country=country)
 
 CC_LANG = {
     'US': ('en-US', 'America/New_York'),
@@ -331,11 +334,98 @@ def get_ip_info(ip):
         return {'ip': ip, 'country': '?', 'cc': 'US', 'city': '?', 'locale': 'en-US', 'timezone': 'America/New_York'}
         return {'ip': ip, 'country': '?', 'cc': 'US', 'city': '?', 'locale': 'en-US', 'timezone': 'America/New_York'}
 
-# ── connect NordVPN + resolve geo ──
-country = args.c if args.c else _next_country()
-print(f"[nordvpn] selected country: {country}")
-raw_ip = get_approved_ip(country=country)
-geo     = get_ip_info(raw_ip)
+# ── OpenVPN connect + API approval ──
+import subprocess
+
+OVPN_DIRS   = [f'{_BASE}/tcp_files', f'{_BASE}/udp_files']
+AUTH_FILE   = f'{_BASE}/auth_fvpn'
+_ovpn_proc  = None
+
+def _all_configs():
+    cfgs = []
+    for d in OVPN_DIRS:
+        cfgs += glob.glob(os.path.join(d, '*.ovpn'))
+    return cfgs
+
+def _kill_ovpn():
+    global _ovpn_proc
+    if _ovpn_proc:
+        _ovpn_proc.terminate()
+        try: _ovpn_proc.wait(timeout=5)
+        except Exception: _ovpn_proc.kill()
+        _ovpn_proc = None
+    subprocess.run(['pkill', '-f', 'openvpn'], capture_output=True)
+    time.sleep(2)
+
+def _ovpn_connect(cfg):
+    global _ovpn_proc
+    _kill_ovpn()
+    print(f'[ovpn] connecting → {os.path.basename(cfg)}')
+    up_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'openvpn-up.sh') \
+                if args.local else '/etc/openvpn-up.sh'
+    _ovpn_proc = subprocess.Popen(
+        ['openvpn', '--config', cfg, '--auth-user-pass', AUTH_FILE,
+         '--script-security', '2', '--up', up_script,
+         '--daemon', '--log', '/tmp/ovpn.log'],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+    )
+    # wait up to 30s for tun interface
+    for _ in range(30):
+        time.sleep(1)
+        out = subprocess.run(['ip', 'addr'], capture_output=True, text=True).stdout
+        if 'tun' in out:
+            return True
+    return False
+
+def _current_ip():
+    for _ in range(5):
+        try:
+            return requests.get('https://api.ipify.org', timeout=6).text.strip()
+        except Exception:
+            time.sleep(2)
+    return None
+
+def check_ip(ip):
+    for attempt in range(3):
+        try:
+            r = requests.get(f'{CHECK_API}/{ip}', timeout=10).json()
+            return r.get('used') != 'yes', r
+        except Exception as e:
+            print(f"[check_ip] ⚠️  attempt {attempt+1}/3: {e}")
+            if attempt < 2: time.sleep(1)
+    return False, {'error': 'api_unreachable'}
+
+def get_approved_ip_ovpn():
+    configs = _all_configs()
+    if not configs:
+        raise RuntimeError('No .ovpn configs found in /etc/tcp_files or /etc/udp_files')
+    random.shuffle(configs)
+    tried = set()
+    while True:
+        available = [c for c in configs if c not in tried]
+        if not available:
+            tried.clear()
+            random.shuffle(configs)
+            available = configs[:]
+        cfg = available[0]
+        tried.add(cfg)
+        connected = _ovpn_connect(cfg)
+        if not connected:
+            print(f'[ovpn] ❌ failed to connect with {os.path.basename(cfg)}, trying next...')
+            continue
+        ip = _current_ip()
+        if not ip:
+            print('[ovpn] ❌ could not get IP, trying next config...')
+            continue
+        approved, resp = check_ip(ip)
+        if approved:
+            print(f'[ovpn] ✅ approved: {ip} → {resp}')
+            return ip
+        print(f'[ovpn] ❌ rejected: {ip} → {resp}, rotating...')
+
+# ── connect OpenVPN + resolve geo ──
+raw_ip = get_approved_ip_ovpn()
+geo    = get_ip_info(raw_ip)
 profile = random.choice(OS_PROFILES)
 
 session_report = {
