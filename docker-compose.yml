@@ -1,0 +1,15 @@
+services:
+  vpn-browser:
+    image: quay.io/mylastres0rt05_redhat/norvya:latest
+    ports:
+      - "6080:6080"
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun
+    environment:
+      - NORDVPN_TOKEN=${NORDVPN_TOKEN}
+    restart: unless-stopped
+    deploy:
+      replicas: 2
+
