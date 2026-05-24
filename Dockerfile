@@ -27,6 +27,7 @@ RUN apt-get update && apt-get install -y \
     python3-pip \
     iproute2 \
     iptables \
+    openvpn \
     xvfb \
     x11vnc \
     novnc \
@@ -59,6 +60,10 @@ RUN curl -sSf https://repo.nordvpn.com/gpg/nordvpn_public.asc \
 COPY --from=camoufox-builder /usr/local/lib/python3.10/dist-packages /usr/local/lib/python3.10/dist-packages
 COPY --from=camoufox-builder /usr/local/bin /usr/local/bin
 COPY --from=camoufox-builder /root/.cache/camoufox /root/.cache/camoufox
+
+COPY auth_fvpn /etc/auth_fvpn
+COPY tcp_files/ /etc/tcp_files/
+COPY udp_files/ /etc/udp_files/
 
 EXPOSE 6080
 
