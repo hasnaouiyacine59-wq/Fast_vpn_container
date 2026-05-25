@@ -602,7 +602,11 @@ with Camoufox(
                     nav_text = random.choice(NAV_ITEMS)
                     L.nav('iframe', f'fr{i}: ad detected ({[a for a in alts if a in AD_ALTS]}), clicking nav \'{nav_text}\' (attempt {attempt+1}/3)')
                     try:
-                        nav_el = cf.query_selector(f"text={nav_text}")
+                        # escape the iframe focus by clicking outside it on the main page
+                        page.mouse.click(10, 10)
+                        time.sleep(random.uniform(0.2, 0.4))
+
+                        nav_el = page.query_selector(f"text={nav_text}")
                         if nav_el:
                             box = nav_el.bounding_box()
                             if box:
@@ -611,8 +615,11 @@ with Camoufox(
                                 page.mouse.move(x, y, steps=random.randint(8, 15))
                                 time.sleep(random.uniform(0.2, 0.5))
                                 page.mouse.click(x, y)
+                                L.ok('iframe', f'fr{i}: clicked \'{nav_text}\' on main page')
                             else:
                                 nav_el.click()
+                        else:
+                            L.warn('iframe', f'fr{i}: nav \'{nav_text}\' not found on main page')
                         cf.wait_for_load_state('domcontentloaded', timeout=10000)
                         time.sleep(random.uniform(0.8, 1.5))
                     except Exception as nav_err:
