@@ -361,6 +361,7 @@ def _ovpn_connect(cfg):
     global _ovpn_proc
     _kill_ovpn()
     print(f'[ovpn] connecting → {os.path.basename(cfg)}')
+    open('/tmp/ovpn.log', 'w').close()  # clear log before new attempt
     up_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'openvpn-up.sh') \
                 if args.local else '/etc/openvpn-up.sh'
     _ovpn_proc = subprocess.Popen(
@@ -369,12 +370,15 @@ def _ovpn_connect(cfg):
          '--daemon', '--log', '/tmp/ovpn.log'],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
     )
-    # wait up to 30s for tun interface
+    # wait up to 30s for "Initialization Sequence Completed" in log
     for _ in range(30):
         time.sleep(1)
-        out = subprocess.run(['ip', 'addr'], capture_output=True, text=True).stdout
-        if 'tun' in out:
-            return True
+        try:
+            log = open('/tmp/ovpn.log').read()
+            if 'Initialization Sequence Completed' in log:
+                return True
+        except Exception:
+            pass
     return False
 
 def _current_ip():
