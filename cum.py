@@ -1,4 +1,5 @@
 import os, json, time, random, requests, argparse, platform, uuid, socket, sys, itertools, threading, shutil, glob
+import log as L
 sys.stdout.reconfigure(encoding='utf-8')
 os.environ['CAMOUFOX_NO_UPDATE'] = '1'
 
@@ -6,11 +7,11 @@ os.environ['CAMOUFOX_NO_UPDATE'] = '1'
 for _p in glob.glob('/tmp/playwright_firefoxdev_profile-*') + glob.glob('/tmp/playwright-artifacts-*'):
     try:
         shutil.rmtree(_p)
-        print(f"[clean] removed {_p}")
+        L.debug('clean', f'removed {_p}')
     except Exception:
         pass
 
-VERSION = "fastvpn v 1.0.0 beta"
+VERSION = "fastvpn v 2.0.0 beta"
 BANNER = f"""
   ███╗   ██╗ ██████╗ ██╗   ██╗ █████╗     ██████╗ ██╗███╗   ██╗
   ████╗  ██║██╔═══██╗██║   ██║██╔══██╗    ██╔══██╗██║████╗  ██║
@@ -350,35 +351,38 @@ def _all_configs():
 def _kill_ovpn():
     global _ovpn_proc
     if _ovpn_proc:
-        _ovpn_proc.terminate()
-        try: _ovpn_proc.wait(timeout=5)
-        except Exception: _ovpn_proc.kill()
+        try:
+            _ovpn_proc.terminate()
+            _ovpn_proc.wait(timeout=5)
+        except Exception:
+            pass
         _ovpn_proc = None
-    subprocess.run(['pkill', '-f', 'openvpn'], capture_output=True)
+    subprocess.run(['sudo', 'pkill', '-f', 'openvpn'], capture_output=True)
     time.sleep(2)
 
 def _ovpn_connect(cfg):
     global _ovpn_proc
     _kill_ovpn()
-    print(f'[ovpn] connecting → {os.path.basename(cfg)}')
+    L.nav('ovpn', f'connecting → {os.path.basename(cfg)}')
     open('/tmp/ovpn.log', 'w').close()  # clear log before new attempt
     up_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'openvpn-up.sh') \
                 if args.local else '/etc/openvpn-up.sh'
     log_fh = open('/tmp/ovpn.log', 'w')
     _ovpn_proc = subprocess.Popen(
-        ['openvpn', '--config', cfg, '--auth-user-pass', AUTH_FILE,
+        ['sudo','openvpn', '--config', cfg, '--auth-user-pass', AUTH_FILE,
          '--script-security', '2', '--up', up_script],
         stdout=log_fh, stderr=log_fh
     )
     # wait up to 30s for "Initialization Sequence Completed" in log
-    for _ in range(30):
-        time.sleep(1)
-        try:
-            log = open('/tmp/ovpn.log').read()
-            if 'Initialization Sequence Completed' in log:
-                return True
-        except Exception:
-            pass
+    with L.Spinner('ovpn', f'connecting {os.path.basename(cfg)}'):
+        for _ in range(30):
+            time.sleep(1)
+            try:
+                log = open('/tmp/ovpn.log').read()
+                if 'Initialization Sequence Completed' in log:
+                    return True
+            except Exception:
+                pass
     return False
 
 def _current_ip():
@@ -395,7 +399,7 @@ def check_ip(ip):
             r = requests.get(f'{CHECK_API}/{ip}', timeout=10).json()
             return r.get('used') != 'yes', r
         except Exception as e:
-            print(f"[check_ip] ⚠️  attempt {attempt+1}/3: {e}")
+            L.warn('check_ip', f'attempt {attempt+1}/3: {e}')
             if attempt < 2: time.sleep(1)
     return False, {'error': 'api_unreachable'}
 
@@ -415,17 +419,17 @@ def get_approved_ip_ovpn():
         tried.add(cfg)
         connected = _ovpn_connect(cfg)
         if not connected:
-            print(f'[ovpn] ❌ failed to connect with {os.path.basename(cfg)}, trying next...')
+            L.err('ovpn', f'failed to connect with {os.path.basename(cfg)}, trying next...')
             continue
         ip = _current_ip()
         if not ip:
-            print('[ovpn] ❌ could not get IP, trying next config...')
+            L.err('ovpn', 'could not get IP, trying next config...')
             continue
         approved, resp = check_ip(ip)
         if approved:
-            print(f'[ovpn] ✅ approved: {ip} → {resp}')
+            L.ok('ovpn', f'approved: {ip} → {resp}')
             return ip
-        print(f'[ovpn] ❌ rejected: {ip} → {resp}, rotating...')
+        L.err('ovpn', f'rejected: {ip} → {resp}, rotating...')
 
 # ── connect OpenVPN + resolve geo ──
 raw_ip = get_approved_ip_ovpn()
@@ -446,8 +450,9 @@ session_report = {
     'iframes':   [],
 }
 
-print(f"[geo]     {geo['ip']} [{geo['cc']}] {geo['country']}, {geo['city']} | {geo['locale']} / {geo['timezone']}")
-print(f"[browser] os={profile['os']} window={profile['window']}")
+L.section('SESSION')
+L.info('geo',     f"{geo['ip']} [{geo['cc']}] {geo['country']}, {geo['city']} | {geo['locale']} / {geo['timezone']}")
+L.info('browser', f"os={profile['os']} window={profile['window']}")
 
 with Camoufox(
     # headless="virtual",
@@ -479,7 +484,7 @@ with Camoufox(
 
     # ── visit URL_3 first, then switch to URL_2 in the same tab ──
     def lik():
-        print('── visit URL_3 first, then switch to URL_2 in the same tab ──')
+        L.section('TAB INTERACTION')
         iframes = page.query_selector_all('iframe')
         for i, fr in enumerate(iframes):
             try:
@@ -489,23 +494,21 @@ with Camoufox(
                 tx = box['x'] + box['width']  * random.uniform(0.3, 0.7)
                 ty = box['y'] + box['height'] * random.uniform(0.3, 0.7)
                 page.mouse.move(tx, ty, steps=2)
-                print(f"[tab] hovering iframe-{i}")
+                L.debug('tab', f'hovering iframe-{i}')
                 time.sleep(0.1)
 
-                # click and wait for new tab
                 with page.context.expect_page() as new_page_info:
                     page.mouse.click(tx, ty)
                 new_tab = new_page_info.value
                 new_tab.bring_to_front()
                 new_tab.wait_for_load_state('load', timeout=20000)
-                print(f"[tab] new tab opened")
-                # track title changes through redirections — exit when idle 15s
+                L.info('tab', 'new tab opened')
                 last_title = None
                 idle = 0
                 while idle < 15:
                     try:
                         title = new_tab.title()
-                        print(f"[tab] title: {repr(title)} | {new_tab.url}")
+                        L.nav('tab', f'{repr(title)} | {new_tab.url}')
                         key = title or new_tab.url
                         if key and key != last_title:
                             last_title = key
@@ -516,92 +519,65 @@ with Camoufox(
                             idle += 1
                     except Exception:
                         if new_tab.is_closed():
-                            print("[tab] tab closed itself, exiting loop")
+                            L.warn('tab', 'tab closed itself, exiting loop')
                             break
                         idle += 1
                     time.sleep(1)
 
                 new_tab.close()
-                # ensure exactly 1 tab remains and bring it to front
                 pages = page.context.pages
-                print(f"[tab] closed, tabs remaining: {len(pages)}")
+                L.debug('tab', f'closed, tabs remaining: {len(pages)}')
                 if pages:
                     pages[0].bring_to_front()
-                    print(f"[tab] back to main: {pages[0].url}")
+                    L.debug('tab', f'back to main: {pages[0].url}')
 
             except Exception as e:
-                print(f"[tab] ⚠️  iframe-{i}: {e}")
+                L.warn('tab', f'iframe-{i}: {e}')
 
-    print(f"\n🌐  Navigating to {URL_3} ...")
+    L.section('NAVIGATE')
     try:
-        page.goto(URL_3, wait_until='domcontentloaded', timeout=60000)
-        print(f"[debug] domcontentloaded fired, waiting for load...")
-        page.wait_for_load_state('load', timeout=30000)
-        print(f"[debug] load state reached")
+        with L.Spinner('nav', f'loading {URL_3}'):
+            page.goto(URL_3, wait_until='domcontentloaded', timeout=60000)
+            page.wait_for_load_state('load', timeout=30000)
     except Exception as e:
-        print(f"[debug] goto/load warning: {e}")
+        L.warn('nav', f'goto/load warning: {e}')
     if page.is_closed():
-        print(f"[debug] page was closed during navigation to {URL_3}, skipping")
+        L.warn('nav', f'page closed during navigation to {URL_3}, skipping')
     else:
-        print(f"✅  {page.title()} ({page.url})")
-    print("⏳  Waiting 25s...")
-    print(f"[debug] sleeping 5s...")
+        L.ok('nav', f'{page.title()} ({page.url})')
     time.sleep(5)
-    print(f"[debug] sleep done, starting human mouse movement")
 
-    # human mouse movement over iframe during the 20s wait
+    # human mouse movement over iframe
     try:
-        print(f"[debug] querying iframe...")
         iframe_el = page.query_selector('iframe')
-        print(f"[debug] iframe found: {iframe_el is not None}")
         if iframe_el:
             box = iframe_el.bounding_box()
-            print(f"[debug] iframe bounding_box: {box}")
             if box:
-                cx = box['x'] + box['width'] / 2
-                cy = box['y'] + box['height'] / 2
                 safe_above = max(box['y'] - random.randint(80, 180), 5)
-
-                page.mouse.move(
-                    box['x'] + box['width'] * random.uniform(0.2, 0.8),
-                    safe_above, steps=5
-                )
+                page.mouse.move(box['x'] + box['width'] * random.uniform(0.2, 0.8), safe_above, steps=5)
                 time.sleep(random.uniform(0.3, 0.7))
-
                 for _ in range(2):
-                    page.mouse.move(
-                        box['x'] + box['width'] * random.uniform(0.1, 0.9),
-                        box['y'] + box['height'] * random.uniform(0.05, 0.2),
-                        steps=5
-                    )
+                    page.mouse.move(box['x'] + box['width'] * random.uniform(0.1, 0.9),
+                                    box['y'] + box['height'] * random.uniform(0.05, 0.2), steps=5)
                     time.sleep(random.uniform(0.3, 0.6))
-
                 for _ in range(3):
-                    page.mouse.move(
-                        box['x'] + box['width'] * random.uniform(0.15, 0.85),
-                        box['y'] + box['height'] * random.uniform(0.2, 0.75),
-                        steps=5
-                    )
+                    page.mouse.move(box['x'] + box['width'] * random.uniform(0.15, 0.85),
+                                    box['y'] + box['height'] * random.uniform(0.2, 0.75), steps=5)
                     time.sleep(random.uniform(0.3, 0.6))
-
-                page.mouse.move(
-                    box['x'] + box['width'] * random.uniform(0.2, 0.8),
-                    max(box['y'] - random.randint(30, 80), 5),
-                    steps=5
-                )
-                print("[tab] human movement over iframe done")
+                page.mouse.move(box['x'] + box['width'] * random.uniform(0.2, 0.8),
+                                max(box['y'] - random.randint(30, 80), 5), steps=5)
+                L.ok('tab', 'human movement over iframe done')
     except Exception as e:
-        print(f"[tab] ⚠️  hover: {e}")
+        L.warn('tab', f'hover: {e}')
 
     # ── read iframe content after hover ──
-    print(f"[debug] reading iframe content...")
+    L.section('IFRAME SCAN')
     try:
         iframes_on_page = page.query_selector_all('iframe')
-        print(f"[debug] {len(iframes_on_page)} iframes on page")
+        L.info('iframe', f'{len(iframes_on_page)} iframes on page')
         for i, fr in enumerate(iframes_on_page):
             try:
                 cf = fr.content_frame()
-                print(f"[debug] fr{i} content_frame: {cf is not None}")
                 if not cf:
                     continue
                 cf.wait_for_load_state('domcontentloaded', timeout=10000)
@@ -616,11 +592,55 @@ with Camoufox(
                 entry = {'index': i, 'text': body_text, 'alts': alts}
                 session_report['iframes'].append(entry)
                 session_report['titles'].extend(alts)
-                print(f"[iframe] fr{i}: alts={alts} | text={body_text[:80]}")
+                L.info('iframe', f'fr{i}: alts={alts} | text={body_text[:80]}')
+
+                AD_ALTS = {'Best game to win crypto!', 'Earn While Playing', 'Advertise in this ad space'}
+                NAV_ITEMS = ["Home", "Chart", "Trades", "Token", "Search", "Swap", "Portfolio", "Chains"]
+                for attempt in range(3):
+                    if not any(a in AD_ALTS for a in alts):
+                        break
+                    nav_text = random.choice(NAV_ITEMS)
+                    L.nav('iframe', f'fr{i}: ad detected ({[a for a in alts if a in AD_ALTS]}), clicking nav \'{nav_text}\' (attempt {attempt+1}/3)')
+                    try:
+                        nav_el = cf.query_selector(f"text={nav_text}")
+                        if nav_el:
+                            box = nav_el.bounding_box()
+                            if box:
+                                x = box['x'] + box['width'] * random.uniform(0.3, 0.7)
+                                y = box['y'] + box['height'] * random.uniform(0.3, 0.7)
+                                page.mouse.move(x, y, steps=random.randint(8, 15))
+                                time.sleep(random.uniform(0.2, 0.5))
+                                page.mouse.click(x, y)
+                            else:
+                                nav_el.click()
+                        cf.wait_for_load_state('domcontentloaded', timeout=10000)
+                        time.sleep(random.uniform(0.8, 1.5))
+                    except Exception as nav_err:
+                        L.warn('iframe', f'fr{i} nav click error: {nav_err}')
+                    seen = set()
+                    alts = []
+                    for el in cf.query_selector_all('img'):
+                        alt = (el.get_attribute('alt') or '').strip()
+                        if alt and alt not in seen:
+                            seen.add(alt)
+                            alts.append(alt)
+                    body_text = cf.inner_text('body').strip()[:300].replace('\n', ' ')
+                    L.info('iframe', f'fr{i} retry {attempt+1}: alts={alts} | text={body_text[:80]}')
+                else:
+                    if any(a in AD_ALTS for a in alts):
+                        L.warn('iframe', f'fr{i}: still ad after 3 attempts, giving up')
+
+                # if iframe resolved to a known task page, run it
+                if not any(a in AD_ALTS for a in alts):
+                    task_action.run(body_text[:80], '', page)
+
+                entry = {'index': i, 'text': body_text, 'alts': alts}
+                session_report['iframes'].append(entry)
+                session_report['titles'].extend(alts)
             except Exception as e:
-                print(f"[iframe] ⚠️  fr{i}: {e}")
+                L.warn('iframe', f'fr{i}: {e}')
     except Exception as e:
-        print(f"[iframe] ⚠️  {e}")
+        L.warn('iframe', str(e))
 
     time.sleep(20)
     #new step

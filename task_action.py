@@ -1,4 +1,5 @@
 import time, random, os, re, cv2, numpy as np
+import log as L
 
 
 def _human_scroll(page):
@@ -26,15 +27,13 @@ def _human_scroll(page):
 TEMPLATE_OK = os.path.join(os.path.dirname(__file__), 'src', 'ok.png')
 
 def _find_and_click_ok(page, timeout=30):
-    """Take screenshots and use OpenCV template matching to find and click ok.png."""
     template = cv2.imread(TEMPLATE_OK, cv2.IMREAD_COLOR)
     if template is None:
-        print("   [journy] ⚠️  src/ok.png not found")
+        L.warn('journy', 'src/ok.png not found')
         return False
     th, tw = template.shape[:2]
     deadline = time.time() + timeout
     while time.time() < deadline:
-        # screenshot as numpy array
         png = page.screenshot()
         arr = np.frombuffer(png, np.uint8)
         screen = cv2.imdecode(arr, cv2.IMREAD_COLOR)
@@ -43,49 +42,45 @@ def _find_and_click_ok(page, timeout=30):
         if max_val >= 0.85:
             cx = max_loc[0] + tw // 2
             cy = max_loc[1] + th // 2
-            print(f"   [journy] ✅ ok.png found (conf={max_val:.2f}) clicking ({cx},{cy})")
+            L.ok('journy', f'ok.png found (conf={max_val:.2f}) clicking ({cx},{cy})')
             page.mouse.click(cx, cy)
             return True
         time.sleep(1)
-    print("   [journy] ⚠️  ok.png not matched within timeout")
+    L.warn('journy', 'ok.png not matched within timeout')
     return False
 
 
 def journy_func(page):
-    """Task for 'Just a moment...' title (Cloudflare challenge)."""
-    print("   [journy] waiting 10s...")
+    L.info('journy', 'waiting 10s...')
     time.sleep(10)
     _find_and_click_ok(page)
-    # wait for Cloudflare to resolve and title to change
-    print("   [journy] waiting for redirect after ok click...")
+    L.info('journy', 'waiting for redirect after ok click...')
     for _ in range(30):
         try:
             t = page.title()
             if t and "just a moment" not in t.lower() and "nur einen moment" not in t.lower() and "..." not in t.lower():
-                print(f"   [journy] ✅ resolved → {t}")
-                return False  # return False so caller keeps looping to pick up new title
+                L.ok('journy', f'resolved → {t}')
+                return False
         except Exception:
             pass
         time.sleep(1)
-    print("   [journy] ⚠️  timed out waiting for resolution")
+    L.warn('journy', 'timed out waiting for resolution')
 
 
 def error_502(page):
-    """Task for 502 error — reload and retry scroll."""
-    print("   [task] 502 error: reloading...")
+    L.warn('task', '502 error: reloading...')
     try:
         page.reload(wait_until='networkidle', timeout=30000)
-        print("   [task] 502 reloaded, scrolling...")
+        L.ok('task', '502 reloaded, scrolling...')
         _human_scroll(page)
     except Exception as e:
-        print(f"   [task] 502 reload failed: {e}")
+        L.err('task', f'502 reload failed: {e}')
 
 
 def statewins(page):
-    """Task for Statewins title."""
-    print("   [task] statewins: scrolling...")
+    L.info('task', 'statewins: scrolling...')
     _human_scroll(page)
-    print("   [task] statewins: done")
+    L.ok('task', 'statewins: done')
 
 
 DOMAINS = ["techxbox.eu.org", "beta-sig.eu.org", "itchigho.eu.org", "sec4891.eu.org", "youoneshell.eu.org"]
@@ -95,81 +90,113 @@ def _gen_email():
     return f"{user}@{random.choice(DOMAINS)}"
 
 def crypto_gateway(page):
-    """Task for Crypto payment gateway — click accept button and wait."""
     accept = page.query_selector(
         'button:has-text("Accept"), button:has-text("accept"), '
         'button:has-text("Agree"), button:has-text("Continue"), '
         'input[value*="Accept" i], input[value*="Agree" i]'
     )
     if accept:
-        print(f"   [crypto] ✅ accept button found: {(accept.inner_text() or '').strip()}")
+        L.ok('crypto', f'accept button found: {(accept.inner_text() or "").strip()}')
         accept.click()
-        print("   [crypto] ✅ clicked")
     else:
-        print("   [crypto] ⚠️  accept button not found")
+        L.warn('crypto', 'accept button not found')
     time.sleep(random.uniform(3, 5))
 
 def lock_com(page):
-    """Task for Lock.com — find email field, fill generated email, press Enter."""
     selectors = [
         '#email-mobile',
         'input[name="email"]',
         'input[type="email"]',
         'input[placeholder*="email" i]',
+        'input[autocomplete*="email" i]',
+        'input[class*="email" i]',
+        'input[id*="email" i]',
+        'input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="checkbox"]):not([type="radio"])',
     ]
     email_field = None
     for sel in selectors:
         try:
-            page.wait_for_selector(sel, timeout=10000)
-            email_field = page.query_selector(sel)
-            if email_field:
-                print(f"   [lock] ✅ email field found via: {sel}")
+            el = page.query_selector(sel)
+            if el and el.is_visible():
+                email_field = el
+                L.ok('lock', f'email field found via: {sel}')
                 break
         except Exception:
             continue
 
-    if email_field:
-        email = _gen_email()
-        print(f"   [lock] filling: {email}")
-        email_field.click()
-        time.sleep(random.uniform(0.4, 0.8))
-        email_field.fill('')
-        email_field.type(email, delay=random.randint(60, 130))
-        time.sleep(random.uniform(0.3, 0.6))
-        email_field.press('Enter')
-        print("   [lock] ✅ Enter pressed")
-        wait = random.uniform(4, 7)
-        print(f"   [lock] waiting {wait:.1f}s for submit...")
-        time.sleep(wait)
-    else:
-        print("   [lock] ⚠️  email field not found")
+    if not email_field:
+        # dump all inputs to help diagnose
+        all_inputs = page.query_selector_all('input, textarea')
+        L.warn('lock', f'email field not found — {len(all_inputs)} inputs on page:')
+        for el in all_inputs:
+            try:
+                L.debug('lock', f'  type={el.get_attribute("type")} name={el.get_attribute("name")} id={el.get_attribute("id")} placeholder={el.get_attribute("placeholder")} visible={el.is_visible()}')
+            except Exception:
+                pass
+        return
+
+    email = _gen_email()
+    L.info('lock', f'filling: {email}')
+    email_field.scroll_into_view_if_needed()
+    email_field.click()
+    time.sleep(random.uniform(0.4, 0.8))
+    email_field.fill('')
+    email_field.type(email, delay=random.randint(60, 130))
+    time.sleep(random.uniform(0.3, 0.6))
+    email_field.press('Enter')
+    L.ok('lock', 'Enter pressed')
+    wait = random.uniform(4, 7)
+    L.info('lock', f'waiting {wait:.1f}s for submit...')
+    time.sleep(wait)
+
+
+def lock_com_full(page):
+    """Wait 10s, dump all interactive elements, then fill email."""
+    L.section('LOCK.COM')
+    L.info('lock', f'{page.title()} | {page.url}')
+    L.info('lock', 'waiting 10s for page to settle...')
+    time.sleep(10)
+
+    # dump all visible interactive + text elements
+    elements = page.query_selector_all('a, button, input, select, textarea, h1, h2, h3, p, label, span')
+    L.info('lock', f'{len(elements)} elements found:')
+    for el in elements:
+        try:
+            tag  = el.evaluate("e => e.tagName.toLowerCase()")
+            txt  = (el.inner_text() or el.get_attribute('placeholder') or el.get_attribute('value') or '').strip()[:80].replace('\n', ' ')
+            typ  = el.get_attribute('type') or ''
+            name = el.get_attribute('name') or el.get_attribute('id') or ''
+            desc = f'<{tag}{"["+typ+"]" if typ else ""}{"#"+name if name else ""}> {txt}'
+            L.debug('lock', desc)
+        except Exception:
+            pass
+
+    lock_com(page)
 
 
 def _hostinger_horizons(page):
-    """Task for Hostinger Horizons — wait for full load, dump all elements."""
-    print(f"   [horizons] title: {page.title()} | url: {page.url}")
+    L.info('horizons', f'{page.title()} | {page.url}')
     try:
         page.wait_for_load_state('networkidle', timeout=30000)
     except Exception:
         pass
     time.sleep(3)
     elements = page.query_selector_all('*')
-    print(f"   [horizons] {len(elements)} elements on page")
+    L.info('horizons', f'{len(elements)} elements on page')
     for el in elements:
         try:
             tag = el.evaluate("e => e.tagName")
             txt = (el.inner_text() or '').strip()[:80].replace('\n', ' ')
-            print(f"      <{tag}> {txt}")
+            L.debug('horizons', f'<{tag}> {txt}')
         except Exception:
             pass
 
 
 def _bc_fill_form(page):
-    """Fill the BC.Game signup dialog with generated email/password."""
     try:
         page.wait_for_selector('div.login-layout-dialog input[type=password]', timeout=120000)
     except Exception:
-        print("   [bc.game] ⚠️  signup form not found")
+        L.warn('bc.game', 'signup form not found')
         return False
 
     dialog = page.query_selector('div.login-layout-dialog')
@@ -209,25 +236,20 @@ def _bc_fill_form(page):
         submit.click()
     else:
         page.keyboard.press('Enter')
-    print(f"   [bc.game] ✅ form submitted — email={email} password={password}")
+    L.ok('bc.game', f'form submitted — email={email} password={password}')
 
     try:
         page.wait_for_selector('button[type=submit]', state='hidden', timeout=10000)
-        print("   [bc.game] ✅ signup complete")
+        L.ok('bc.game', 'signup complete')
     except Exception:
-        print("   [bc.game] ⚠️  submit button still visible")
+        L.warn('bc.game', 'submit button still visible')
     time.sleep(10)
     return True
 
 
 def bc_game_func(page):
-    """Task for 'BC.Game' title — find and click Join button."""
-    print(f"   [bc.game] title: {page.title()} | url: {page.url}")
-    try:
-        page.wait_for_load_state('networkidle', timeout=30000)
-    except Exception:
-        pass
-    time.sleep(3)
+    L.section('BC.GAME')
+    L.info('bc.game', f'{page.title()} | {page.url}')
 
     join_selector = (
         'button:has-text("Join"), a:has-text("Join"), '
@@ -235,16 +257,22 @@ def bc_game_func(page):
         '[class*="join" i], [id*="join" i]'
     )
     try:
-        page.wait_for_selector(join_selector, timeout=10000)
+        page.wait_for_selector(join_selector, timeout=15000)
         btn = page.query_selector(join_selector)
         if btn:
             txt = (btn.inner_text() or '').strip()
-            print(f"   [bc.game] ✅ Join button found: '{txt}' — clicking")
+            L.ok('bc.game', f"Join button found: '{txt}' — clicking")
             btn.click()
-            print("   [bc.game] waiting 10s for form to load...")
-            time.sleep(10)
 
-            # find Sign Up button by innerText — language agnostic
+            signup_selector = ', '.join(
+                f'button:has-text("{t}"), a:has-text("{t}")'
+                for t in ["Sign Up", "Signup", "Register", "注册", "가입"]
+            )
+            try:
+                page.wait_for_selector(signup_selector, timeout=8000)
+            except Exception:
+                pass
+
             signup_texts = ["sign up", "signup", "register", "s'inscrire", "registrarse",
                             "registrar", "cadastrar", "anmelden", "registrieren", "注册", "가입"]
             signup_btn = page.evaluate("""(texts) => {
@@ -258,29 +286,24 @@ def bc_game_func(page):
                 return null;
             }""", signup_texts)
             if signup_btn:
-                print(f"   [bc.game] ✅ Sign Up clicked: '{signup_btn}'")
-                # fill the signup form
+                L.ok('bc.game', f"Sign Up clicked: '{signup_btn}'")
                 _bc_fill_form(page)
             else:
-                print("   [bc.game] ⚠️  Sign Up button not found")
+                L.warn('bc.game', 'Sign Up button not found')
         else:
-            print("   [bc.game] ⚠️  Join button not found")
+            L.warn('bc.game', 'Join button not found')
     except Exception as e:
-        print(f"   [bc.game] ⚠️  Join button error: {e}")
+        L.err('bc.game', f'Join button error: {e}')
 
 
 def flirtbate(page):
-    """Task for Flirtbate title — dismiss age gate, fill email, submit."""
-    # 1. Age gate: click "I Agree"
     try:
         page.wait_for_selector('button:has-text("I Agree")', timeout=10000)
         page.click('button:has-text("I Agree")')
-        print("   [flirtbate] ✅ age gate dismissed")
+        L.ok('flirtbate', 'age gate dismissed')
         time.sleep(random.uniform(1, 2))
     except Exception as e:
-        print(f"   [flirtbate] ⚠️  age gate not found: {e}")
-
-    # 2. Fill email and submit
+        L.warn('flirtbate', f'age gate not found: {e}')
     lock_com(page)
 
 
@@ -294,9 +317,10 @@ TASKS = {
     "just a moment": journy_func,
     "nur einen moment": journy_func,
     "...": journy_func,
-    "lock.com": lock_com,
+    "lock.com": lock_com_full,
     "crypto payment gateway": crypto_gateway,
     "hostinger horizons": lambda page: _hostinger_horizons(page),
+    "earn while playing": bc_game_func,
 }
 
 # def landingbc(page):
