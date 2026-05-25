@@ -364,11 +364,11 @@ def _ovpn_connect(cfg):
     open('/tmp/ovpn.log', 'w').close()  # clear log before new attempt
     up_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'openvpn-up.sh') \
                 if args.local else '/etc/openvpn-up.sh'
+    log_fh = open('/tmp/ovpn.log', 'w')
     _ovpn_proc = subprocess.Popen(
         ['openvpn', '--config', cfg, '--auth-user-pass', AUTH_FILE,
-         '--script-security', '2', '--up', up_script,
-         '--log', '/tmp/ovpn.log'],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+         '--script-security', '2', '--up', up_script],
+        stdout=log_fh, stderr=log_fh
     )
     # wait up to 30s for "Initialization Sequence Completed" in log
     for _ in range(30):
