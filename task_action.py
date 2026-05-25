@@ -98,6 +98,7 @@ def crypto_gateway(page):
     if accept:
         L.ok('crypto', f'accept button found: {(accept.inner_text() or "").strip()}')
         accept.click()
+        time.sleep(8)
     else:
         L.warn('crypto', 'accept button not found')
     time.sleep(random.uniform(3, 5))

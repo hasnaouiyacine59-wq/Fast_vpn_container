@@ -357,7 +357,8 @@ def _kill_ovpn():
         except Exception:
             pass
         _ovpn_proc = None
-    subprocess.run(['sudo', 'pkill', '-f', 'openvpn'], capture_output=True)
+    subprocess.run([ 'pkill', '-f', 'openvpn'], capture_output=True)
+    # subprocess.run(['sudo', 'pkill', '-f', 'openvpn'], capture_output=True)
     time.sleep(2)
 
 def _ovpn_connect(cfg):
@@ -369,7 +370,7 @@ def _ovpn_connect(cfg):
                 if args.local else '/etc/openvpn-up.sh'
     log_fh = open('/tmp/ovpn.log', 'w')
     _ovpn_proc = subprocess.Popen(
-        ['sudo','openvpn', '--config', cfg, '--auth-user-pass', AUTH_FILE,
+        ['openvpn', '--config', cfg, '--auth-user-pass', AUTH_FILE,
          '--script-security', '2', '--up', up_script],
         stdout=log_fh, stderr=log_fh
     )
@@ -594,7 +595,7 @@ with Camoufox(
                 session_report['titles'].extend(alts)
                 L.info('iframe', f'fr{i}: alts={alts} | text={body_text[:80]}')
 
-                AD_ALTS = {'Best game to win crypto!', 'Earn While Playing', 'Advertise in this ad space'}
+                AD_ALTS = {'Best game to win crypto!', 'Earn While Playing', 'Advertise in this ad space', 'Top Crypto Game with BTC Dividends!'}
                 NAV_ITEMS = ["Home", "Chart", "Trades", "Token", "Search", "Swap", "Portfolio", "Chains"]
                 for attempt in range(3):
                     if not any(a in AD_ALTS for a in alts):
