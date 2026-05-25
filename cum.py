@@ -367,7 +367,7 @@ def _ovpn_connect(cfg):
     _ovpn_proc = subprocess.Popen(
         ['openvpn', '--config', cfg, '--auth-user-pass', AUTH_FILE,
          '--script-security', '2', '--up', up_script,
-         '--daemon', '--log', '/tmp/ovpn.log'],
+         '--log', '/tmp/ovpn.log'],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
     )
     # wait up to 30s for "Initialization Sequence Completed" in log
