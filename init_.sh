@@ -1,5 +1,11 @@
 #!/bin/bash
-docker rm -f $(docker ps -aq)
+
+echo "Wiping all Docker containers and images..."
+docker stop $(docker ps -aq) 2>/dev/null || true
+docker rm -f $(docker ps -aq) 2>/dev/null || true
+docker rmi  $(docker images -q) --force   2>/dev/null || true
+docker system prune -af --volumes 2>/dev/null
+
 docker pull quay.io/mylastres0rt05_redhat/fast_vpn_container:latest
 
 docker run -d \
