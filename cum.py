@@ -11,7 +11,7 @@ for _p in glob.glob('/tmp/playwright_firefoxdev_profile-*') + glob.glob('/tmp/pl
     except Exception:
         pass
 
-VERSION = "fastvpn v 2.0.0 beta"
+VERSION = "fastvpn v 3.0.0 beta"
 BANNER = f"""
   ███╗   ██╗ ██████╗ ██╗   ██╗ █████╗     ██████╗ ██╗███╗   ██╗
   ████╗  ██║██╔═══██╗██║   ██║██╔══██╗    ██╔══██╗██║████╗  ██║
