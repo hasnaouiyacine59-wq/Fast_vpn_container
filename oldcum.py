@@ -539,37 +539,6 @@ with Camoufox(
                 L.warn('tab', f'iframe-{i}: {e}')
 
     L.section('NAVIGATE')
-
-    # ── ads.py: visit aads.com + send chat messages ──
-    import ads as _ads_mod, time as _ads_time, random as _ads_random
-    _ads_mod.run(page)
-    try:
-        page.wait_for_load_state('networkidle', timeout=15000)
-    except Exception:
-        pass
-    try:
-        _chat_btn = page.locator('[data-type="chat"][aria-label="Chat with AADS"]').first
-        _chat_btn.wait_for(state='visible', timeout=20000)
-        _chat_btn.click()
-        _ads_time.sleep(6)
-        _crisp = next((fr for fr in page.frames if 'crisp' in fr.url), None)
-        if not _crisp:
-            _crisp = next((fr for fr in page.frames if fr.locator('textarea[name="message"]').count() > 0), None)
-        if _crisp:
-            _mb = _crisp.locator('textarea[name="message"]')
-            _mb.wait_for(state='visible', timeout=15000)
-            _mb.click()
-            _mb.type(_ads_random.choice(_ads_mod.CHAT_MESSAGES), delay=60)
-            _mb.press('Enter')
-            _ads_time.sleep(_ads_random.uniform(2, 4))
-            _mb.click()
-            _mb.type(_ads_random.choice(_ads_mod.MONEY_MESSAGES), delay=60)
-            _mb.press('Enter')
-            print("[ads] chat messages sent")
-    except Exception as _ae:
-        print(f"[ads] chat failed: {_ae}")
-    _ads_time.sleep(_ads_random.uniform(15, 30))
-
     try:
         with L.Spinner('nav', f'loading {URL_3}'):
             page.goto(URL_3, wait_until='domcontentloaded', timeout=60000)
